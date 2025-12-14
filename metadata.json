@@ -1,0 +1,5 @@
+{
+  "name": "AutoRedTeam: AI Safety Simulator",
+  "description": "An autonomous red-teaming environment where an Attacker Agent tries to extract secrets from a Target Agent, arbitrated by a Judge Agent.",
+  "requestFramePermissions": []
+}
