@@ -20,6 +20,7 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': path.resolve(__dirname, '.'),
       }
-    }
+    },
+    base: '/auto-llm-redteam/',
   };
 });
