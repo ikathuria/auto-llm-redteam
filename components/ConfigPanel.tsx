@@ -1,5 +1,6 @@
 import React from 'react';
 import { SimulationConfig, SimulationStatus } from '../types';
+import { DEFAULT_CONFIG, AVAILABLE_MODELS } from '../constants';
 import { Settings, ShieldAlert, Target, Database, Download } from 'lucide-react';
 
 interface ConfigPanelProps {
@@ -13,7 +14,7 @@ interface ConfigPanelProps {
   hasData: boolean;
 }
 
-const ConfigPanel: React.FC<ConfigPanelProps> = ({ 
+const ConfigPanel: React.FC<ConfigPanelProps> = ({
   config, setConfig, status, onStart, onStop, onReset, onExport, hasData
 }) => {
   const isLocked = status === SimulationStatus.RUNNING || status === SimulationStatus.PAUSED;
@@ -76,57 +77,60 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
         {/* Settings */}
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
-             <label className="text-[10px] font-bold text-slate-500 uppercase">Max Rounds</label>
-             <input 
-               type="number" 
-               disabled={isLocked}
-               className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"
-               value={config.maxRounds}
-               onChange={(e) => handleChange('maxRounds', parseInt(e.target.value))}
-               min={1} max={20}
-             />
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Max Rounds</label>
+            <input
+              type="number"
+              disabled={isLocked}
+              className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"
+              value={config.maxRounds}
+              onChange={(e) => handleChange('maxRounds', parseInt(e.target.value))}
+              min={1} max={20}
+            />
           </div>
           <div className="space-y-1">
-             <label className="text-[10px] font-bold text-slate-500 uppercase">Model</label>
-             <select 
-               disabled={isLocked}
-               className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"
-               value={config.modelName}
-               onChange={(e) => handleChange('modelName', e.target.value)}
-             >
-               <option value="gemini-2.5-flash">Gemini Flash</option>
-               <option value="gemini-3-pro-preview">Gemini Pro</option>
-             </select>
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Model</label>
+            <select
+              disabled={isLocked}
+              className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-white"
+              value={config.modelName}
+              onChange={(e) => handleChange('modelName', e.target.value)}
+            >
+              {AVAILABLE_MODELS.map(model => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
 
       <div className="mt-auto p-4 border-t border-slate-800 space-y-2">
         {status === SimulationStatus.IDLE || status === SimulationStatus.FINISHED ? (
-          <button 
+          <button
             onClick={onStart}
             className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-bold text-sm transition-colors flex justify-center items-center gap-2"
           >
             Start Simulation
           </button>
         ) : (
-           <button 
+          <button
             onClick={onStop}
             className="w-full py-2 bg-rose-600 hover:bg-rose-500 text-white rounded font-bold text-sm transition-colors"
           >
             {status === SimulationStatus.PAUSED ? "Resume" : "Stop / Pause"}
           </button>
         )}
-        
+
         <div className="flex gap-2">
-          <button 
+          <button
             onClick={onReset}
             disabled={status === SimulationStatus.RUNNING}
             className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-bold text-sm transition-colors disabled:opacity-50"
           >
             Reset
           </button>
-          
+
           <button
             onClick={onExport}
             disabled={!hasData}

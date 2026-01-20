@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SimulationConfig, Message, AgentRole, SimulationStatus, JudgeVerdict } from './types';
 import { DEFAULT_CONFIG } from './constants';
-import * as GeminiService from './services/geminiService';
+import { getLLMProvider } from './services/llmFactory';
 import ConfigPanel from './components/ConfigPanel';
 import ChatFeed from './components/ChatFeed';
 import AnalysisPanel from './components/AnalysisPanel';
@@ -14,7 +14,7 @@ const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [verdicts, setVerdicts] = useState<JudgeVerdict[]>([]);
   const [currentRound, setCurrentRound] = useState(0);
-  
+
   // To avoid closures in setTimeout/useEffect, use refs for mutable status check during async ops
   const statusRef = useRef(status);
   statusRef.current = status;
@@ -22,11 +22,12 @@ const App: React.FC = () => {
   const configRef = useRef(config);
   configRef.current = config;
 
-  const addMessage = (role: AgentRole, content: string) => {
+  const addMessage = (role: AgentRole, content: string, thought?: string) => {
     setMessages(prev => [...prev, {
       id: generateId(),
       role,
       content,
+      thought,
       timestamp: Date.now()
     }]);
   };
@@ -59,30 +60,30 @@ const App: React.FC = () => {
   const handleExportCSV = () => {
     // 1. Header
     const headers = ['Round', 'Attacker Prompt', 'Target Response', 'Success', 'Score', 'Judge Reasoning'];
-    
+
     // 2. Data Rows
     // We assume strict ordering: for every verdict[i], there is an Attacker msg at i and Target msg at i in their respective filtered lists.
     const attackerMsgs = messages.filter(m => m.role === AgentRole.ATTACKER);
     const targetMsgs = messages.filter(m => m.role === AgentRole.TARGET);
-    
+
     const rows = verdicts.map((verdict, index) => {
-        // Safety check for array bounds
-        const attackerText = attackerMsgs[index] ? attackerMsgs[index].content.replace(/"/g, '""') : "";
-        const targetText = targetMsgs[index] ? targetMsgs[index].content.replace(/"/g, '""') : "";
-        const reasoning = verdict.reasoning.replace(/"/g, '""');
-        
-        return [
-            verdict.round,
-            `"${attackerText}"`,
-            `"${targetText}"`,
-            verdict.attackerSuccess,
-            verdict.score,
-            `"${reasoning}"`
-        ].join(',');
+      // Safety check for array bounds
+      const attackerText = attackerMsgs[index] ? attackerMsgs[index].content.replace(/"/g, '""') : "";
+      const targetText = targetMsgs[index] ? targetMsgs[index].content.replace(/"/g, '""') : "";
+      const reasoning = verdict.reasoning.replace(/"/g, '""');
+
+      return [
+        verdict.round,
+        `"${attackerText}"`,
+        `"${targetText}"`,
+        verdict.attackerSuccess,
+        verdict.score,
+        `"${reasoning}"`
+      ].join(',');
     });
 
     const csvContent = [headers.join(','), ...rows].join('\n');
-    
+
     // 3. Download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -109,20 +110,24 @@ const App: React.FC = () => {
       const isFirstTurn = messages.length === 0;
       let attackerMsg = "";
 
+      const provider = getLLMProvider(configRef.current.modelName);
+
       // Step A: Attacker
       const historyForAttacker = messages; // current history
-      attackerMsg = await GeminiService.generateAttackerMove(
-        historyForAttacker, 
+      const { content: attackerMsgContent, thought: attackerThought } = await provider.generateAttackerMove(
+        historyForAttacker,
         configRef.current.attackerGoal,
         configRef.current.modelName
       );
-      
+
+      attackerMsg = attackerMsgContent; // keep local var for next steps context
+
       if (statusRef.current !== SimulationStatus.RUNNING) return;
-      addMessage(AgentRole.ATTACKER, attackerMsg);
+      addMessage(AgentRole.ATTACKER, attackerMsg, attackerThought);
 
       // Step B: Target
       const historyForTarget = [...messages, { id: 'temp', role: AgentRole.ATTACKER, content: attackerMsg, timestamp: Date.now() }];
-      const targetMsg = await GeminiService.generateTargetResponse(
+      const targetMsg = await provider.generateTargetResponse(
         attackerMsg,
         historyForTarget,
         configRef.current.targetSecret,
@@ -135,7 +140,7 @@ const App: React.FC = () => {
 
       // Step C: Judge
       const historyForJudge = [...historyForTarget, { id: 'temp2', role: AgentRole.TARGET, content: targetMsg, timestamp: Date.now() }];
-      const verdict = await GeminiService.evaluateRound(
+      const verdict = await provider.evaluateRound(
         historyForJudge,
         configRef.current.targetSecret,
         configRef.current.modelName,
@@ -177,30 +182,30 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden font-sans">
-      <ConfigPanel 
-        config={config} 
-        setConfig={setConfig} 
-        status={status} 
+      <ConfigPanel
+        config={config}
+        setConfig={setConfig}
+        status={status}
         onStart={handleStart}
         onStop={handleStop}
         onReset={handleReset}
         onExport={handleExportCSV}
         hasData={verdicts.length > 0}
       />
-      
+
       <div className="flex-1 flex flex-col relative">
         <header className="h-14 bg-slate-900 border-b border-slate-800 flex items-center px-6 justify-between shrink-0">
-           <h1 className="font-bold text-lg tracking-wide bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
-             AutoRedTeam <span className="text-slate-600 text-xs font-mono ml-2">v1.0.0 // SYSTEM_READY</span>
-           </h1>
-           <div className="flex gap-4 text-xs text-slate-500 font-mono">
-             <span>API_KEY: {process.env.API_KEY ? 'LOADED' : 'MISSING'}</span>
-           </div>
+          <h1 className="font-bold text-lg tracking-wide bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
+            AutoRedTeam <span className="text-slate-600 text-xs font-mono ml-2">v1.0.0 // SYSTEM_READY</span>
+          </h1>
+          <div className="flex gap-4 text-xs text-slate-500 font-mono">
+            <span>API_KEY: {process.env.API_KEY ? 'LOADED' : 'MISSING'}</span>
+          </div>
         </header>
         <ChatFeed messages={messages} />
       </div>
 
-      <AnalysisPanel 
+      <AnalysisPanel
         verdicts={verdicts}
         status={status}
         currentRound={currentRound}

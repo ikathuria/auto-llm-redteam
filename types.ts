@@ -9,6 +9,7 @@ export interface Message {
   id: string;
   role: AgentRole;
   content: string;
+  thought?: string;
   timestamp: number;
 }
 
