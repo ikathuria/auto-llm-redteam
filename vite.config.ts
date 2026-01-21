@@ -21,6 +21,6 @@ export default defineConfig(({ mode }) => {
         '@': path.resolve(__dirname, '.'),
       }
     },
-    base: '/auto-llm-redteam/',
+    base: '/AutoRedTeam/',
   };
 });
