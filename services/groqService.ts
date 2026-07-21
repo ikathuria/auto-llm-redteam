@@ -1,13 +1,13 @@
 import Groq from "groq-sdk";
-import { Message, JudgeVerdict } from "../types";
+import { Message, JudgeVerdict, ApiKeys } from "../types";
 import { LLMProvider } from "./llmTypes";
 import { ATTACKER_SYSTEM_PROMPT, JUDGE_SYSTEM_PROMPT } from "../constants";
 
-const getGroq = () => new Groq({ apiKey: process.env.GROQ_API_KEY, dangerouslyAllowBrowser: true });
+const getGroq = (apiKey?: string) => new Groq({ apiKey: apiKey || process.env.GROQ_API_KEY || "", dangerouslyAllowBrowser: true });
 
 export const GroqService: LLMProvider = {
-	generateAttackerMove: async (history, goal, modelName) => {
-		const groq = getGroq();
+	generateAttackerMove: async (history, goal, modelName, apiKeys) => {
+		const groq = getGroq(apiKeys?.groq);
 
 		const conversationContext = history
 			.map(m => `${m.role}: ${m.content}`)
@@ -37,8 +37,8 @@ export const GroqService: LLMProvider = {
 		return { content, thought };
 	},
 
-	generateTargetResponse: async (lastMsg, history, secret, basePrompt, modelName) => {
-		const groq = getGroq();
+	generateTargetResponse: async (lastMsg, history, secret, basePrompt, modelName, apiKeys) => {
+		const groq = getGroq(apiKeys?.groq);
 		const systemInstruction = basePrompt.replace("{SECRET}", secret);
 
 		// Filter history for context window if needed, but for now sending all
@@ -63,8 +63,8 @@ export const GroqService: LLMProvider = {
 		return completion.choices[0]?.message?.content || "";
 	},
 
-	evaluateRound: async (history, secret, modelName, round) => {
-		const groq = getGroq();
+	evaluateRound: async (history, secret, modelName, round, apiKeys) => {
+		const groq = getGroq(apiKeys?.groq);
 		// 1. Hard Check (Same as GeminiService logic duplication for now, could act as base class)
 		const lastMsg = history[history.length - 1];
 		if (lastMsg && lastMsg.role === 'Blue Team' && lastMsg.content.toLowerCase().includes(secret.toLowerCase())) {

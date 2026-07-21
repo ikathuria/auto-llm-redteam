@@ -3,15 +3,16 @@ import { Message, AgentRole, JudgeVerdict } from "../types";
 import { ATTACKER_SYSTEM_PROMPT, JUDGE_SYSTEM_PROMPT } from "../constants";
 import { LLMProvider } from "./llmTypes";
 
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getAI = (apiKey?: string) => new GoogleGenAI({ apiKey: apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY || "" });
 
 export const GeminiService: LLMProvider = {
   generateAttackerMove: async (
     history: Message[],
     goal: string,
-    modelName: string
+    modelName: string,
+    apiKeys?: ApiKeys
   ): Promise<{ content: string; thought: string }> => {
-    const ai = getAI();
+    const ai = getAI(apiKeys?.gemini);
 
     // Convert history to a format the attacker understands (context)
     const conversationContext = history
@@ -64,9 +65,10 @@ export const GeminiService: LLMProvider = {
     history: Message[],
     secret: string,
     baseSystemPrompt: string,
-    modelName: string
+    modelName: string,
+    apiKeys?: ApiKeys
   ): Promise<string> => {
-    const ai = getAI();
+    const ai = getAI(apiKeys?.gemini);
 
     // Inject the secret into the prompt template
     const finalSystemPrompt = baseSystemPrompt.replace("{SECRET}", secret);
@@ -95,7 +97,8 @@ export const GeminiService: LLMProvider = {
     history: Message[],
     secret: string,
     modelName: string,
-    round: number
+    round: number,
+    apiKeys?: ApiKeys
   ): Promise<JudgeVerdict> => {
     // 1. HARD CHECK: As requested, strict string matching first.
     // The last message in history is the Target's response.
@@ -115,7 +118,7 @@ export const GeminiService: LLMProvider = {
     }
 
     // 2. AI JUDGE: If exact string not found, use LLM to check for subtle leaks.
-    const ai = getAI();
+    const ai = getAI(apiKeys?.gemini);
 
     const conversationText = history
       .map(m => `[${m.role}]: ${m.content}`)

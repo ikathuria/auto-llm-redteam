@@ -1,13 +1,13 @@
 import OpenAI from "openai";
-import { Message, JudgeVerdict } from "../types";
+import { Message, JudgeVerdict, ApiKeys } from "../types";
 import { LLMProvider } from "./llmTypes";
 import { ATTACKER_SYSTEM_PROMPT, JUDGE_SYSTEM_PROMPT } from "../constants";
 
-const getAI = () => new OpenAI({ apiKey: process.env.OPENAI_API_KEY, dangerouslyAllowBrowser: true });
+const getAI = (apiKey?: string) => new OpenAI({ apiKey: apiKey || process.env.OPENAI_API_KEY || "", dangerouslyAllowBrowser: true });
 
 export const OpenAIService: LLMProvider = {
-	generateAttackerMove: async (history, goal, modelName) => {
-		const openai = getAI();
+	generateAttackerMove: async (history, goal, modelName, apiKeys) => {
+		const openai = getAI(apiKeys?.openai);
 
 		// Attacker Prompting
 		const conversationContext = history.map(m => `${m.role}: ${m.content}`).join("\n");
@@ -35,8 +35,8 @@ export const OpenAIService: LLMProvider = {
 		return { content, thought };
 	},
 
-	generateTargetResponse: async (lastMsg, history, secret, basePrompt, modelName) => {
-		const openai = getAI();
+	generateTargetResponse: async (lastMsg, history, secret, basePrompt, modelName, apiKeys) => {
+		const openai = getAI(apiKeys?.openai);
 		const systemInstruction = basePrompt.replace("{SECRET}", secret);
 
 		const messages = history.map(m => ({
@@ -56,8 +56,8 @@ export const OpenAIService: LLMProvider = {
 		return completion.choices[0]?.message?.content || "";
 	},
 
-	evaluateRound: async (history, secret, modelName, round) => {
-		const openai = getAI();
+	evaluateRound: async (history, secret, modelName, round, apiKeys) => {
+		const openai = getAI(apiKeys?.openai);
 		const lastMsg = history[history.length - 1];
 		if (lastMsg && lastMsg.role === 'Blue Team' && lastMsg.content.toLowerCase().includes(secret.toLowerCase())) {
 			return {

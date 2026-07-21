@@ -10,7 +10,24 @@ export interface Message {
   role: AgentRole;
   content: string;
   thought?: string;
+  modelName?: string; // Cache the model name used to generate this message
   timestamp: number;
+}
+
+export interface ApiKeys {
+  gemini?: string;
+  openai?: string;
+  groq?: string;
+}
+
+export interface Playbook {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  targetSecret: string;
+  targetSystemPrompt: string;
+  attackerGoal: string;
 }
 
 export interface SimulationConfig {
@@ -18,7 +35,11 @@ export interface SimulationConfig {
   targetSystemPrompt: string;
   attackerGoal: string;
   maxRounds: number;
-  modelName: string; // e.g., gemini-2.5-flash
+  attackerModel: string;
+  targetModel: string;
+  judgeModel: string;
+  playbookId: string;
+  useMockMode: boolean;
 }
 
 export interface JudgeVerdict {
@@ -35,3 +56,4 @@ export enum SimulationStatus {
   PAUSED = 'PAUSED',
   FINISHED = 'FINISHED'
 }
+

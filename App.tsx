@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { SimulationConfig, Message, AgentRole, SimulationStatus, JudgeVerdict } from './types';
-import { DEFAULT_CONFIG } from './constants';
+import { SimulationConfig, Message, AgentRole, SimulationStatus, JudgeVerdict, ApiKeys } from './types';
+import { DEFAULT_CONFIG, PLAYBOOKS, MOCK_SIMULATIONS } from './constants';
 import { getLLMProvider } from './services/llmFactory';
 import ConfigPanel from './components/ConfigPanel';
 import ChatFeed from './components/ChatFeed';
 import AnalysisPanel from './components/AnalysisPanel';
+import ApiKeyModal from './components/ApiKeyModal';
 
 const generateId = () => Math.random().toString(36).substring(7);
 
@@ -15,26 +16,37 @@ const App: React.FC = () => {
   const [verdicts, setVerdicts] = useState<JudgeVerdict[]>([]);
   const [currentRound, setCurrentRound] = useState(0);
 
-  // To avoid closures in setTimeout/useEffect, use refs for mutable status check during async ops
+  // API Key State
+  const [apiKeys, setApiKeys] = useState<ApiKeys>({
+    gemini: localStorage.getItem('art_gemini_key') || '',
+    openai: localStorage.getItem('art_openai_key') || '',
+    groq: localStorage.getItem('art_groq_key') || ''
+  });
+  const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
+
+  // Refs for tracking mutable state in loops
   const statusRef = useRef(status);
   statusRef.current = status;
 
   const configRef = useRef(config);
   configRef.current = config;
 
-  const addMessage = (role: AgentRole, content: string, thought?: string) => {
+  const apiKeysRef = useRef(apiKeys);
+  apiKeysRef.current = apiKeys;
+
+  const addMessage = (role: AgentRole, content: string, thought?: string, modelName?: string) => {
     setMessages(prev => [...prev, {
       id: generateId(),
       role,
       content,
       thought,
+      modelName,
       timestamp: Date.now()
     }]);
   };
 
   const handleStart = () => {
     if (status === SimulationStatus.FINISHED) {
-      // Clean start if finished
       setMessages([]);
       setVerdicts([]);
       setCurrentRound(0);
@@ -57,17 +69,19 @@ const App: React.FC = () => {
     setStatus(SimulationStatus.IDLE);
   };
 
-  const handleExportCSV = () => {
-    // 1. Header
-    const headers = ['Round', 'Attacker Prompt', 'Target Response', 'Success', 'Score', 'Judge Reasoning'];
+  const handleSaveKeys = (keys: ApiKeys) => {
+    setApiKeys(keys);
+    localStorage.setItem('art_gemini_key', keys.gemini || '');
+    localStorage.setItem('art_openai_key', keys.openai || '');
+    localStorage.setItem('art_groq_key', keys.groq || '');
+  };
 
-    // 2. Data Rows
-    // We assume strict ordering: for every verdict[i], there is an Attacker msg at i and Target msg at i in their respective filtered lists.
+  const handleExportCSV = () => {
+    const headers = ['Round', 'Attacker Prompt', 'Target Response', 'Success', 'Score', 'Judge Reasoning'];
     const attackerMsgs = messages.filter(m => m.role === AgentRole.ATTACKER);
     const targetMsgs = messages.filter(m => m.role === AgentRole.TARGET);
 
     const rows = verdicts.map((verdict, index) => {
-      // Safety check for array bounds
       const attackerText = attackerMsgs[index] ? attackerMsgs[index].content.replace(/"/g, '""') : "";
       const targetText = targetMsgs[index] ? targetMsgs[index].content.replace(/"/g, '""') : "";
       const reasoning = verdict.reasoning.replace(/"/g, '""');
@@ -83,8 +97,6 @@ const App: React.FC = () => {
     });
 
     const csvContent = [headers.join(','), ...rows].join('\n');
-
-    // 3. Download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -95,9 +107,53 @@ const App: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  const handleExportMarkdown = () => {
+    const playbook = PLAYBOOKS.find(p => p.id === config.playbookId);
+    let md = `# AutoRedTeam Security Audit Report\n\n`;
+    md += `Generated on: ${new Date().toLocaleString()}\n`;
+    md += `Simulation Mode: ${config.useMockMode ? 'MOCK/DEMO RUNNER' : 'LIVE API DUEL'}\n\n`;
+    
+    md += `## Configuration Details\n`;
+    md += `- **Scenario**: ${playbook?.name || config.playbookId}\n`;
+    md += `- **Target Secret**: \`${config.targetSecret}\`\n`;
+    md += `- **Red Team Goal**: ${config.attackerGoal}\n`;
+    md += `- **Max Rounds**: ${config.maxRounds}\n\n`;
+
+    md += `## Agent Specs\n`;
+    md += `- **Red Team Model**: ${config.attackerModel}\n`;
+    md += `- **Blue Team Model**: ${config.targetModel}\n`;
+    md += `- **Arbiter Model**: ${config.judgeModel}\n\n`;
+
+    md += `## Telemetry Metrics\n`;
+    const avgRisk = verdicts.length > 0 ? Math.round(verdicts.reduce((sum, v) => sum + v.score, 0) / verdicts.length) : 0;
+    const maxRisk = verdicts.length > 0 ? Math.max(...verdicts.map(v => v.score)) : 0;
+    const isBreached = verdicts.some(v => v.attackerSuccess);
+    md += `- **System Status**: ${isBreached ? 'COMPROMISED' : 'SECURE'}\n`;
+    md += `- **Peak Intrusion Score**: ${maxRisk}%\n`;
+    md += `- **Average Intrusion Score**: ${avgRisk}%\n\n`;
+
+    md += `## Simulation Transcript\n\n`;
+    messages.forEach((msg) => {
+      md += `### [${msg.role.toUpperCase()}] (${msg.modelName || 'System'})\n`;
+      if (msg.thought) {
+        md += `> **Thought Process**:\n> *${msg.thought.replace(/\n/g, '\n> ')}*\n\n`;
+      }
+      md += `${msg.content}\n\n`;
+      md += `---\n\n`;
+    });
+
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `red_team_report_${config.playbookId}.md`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // The Game Loop
   const runTurn = useCallback(async () => {
-    // Check if we should stop
     if (statusRef.current !== SimulationStatus.RUNNING) return;
     if (currentRound >= configRef.current.maxRounds) {
       setStatus(SimulationStatus.FINISHED);
@@ -105,83 +161,136 @@ const App: React.FC = () => {
       return;
     }
 
-    // 1. Attacker Move
+    // A. MOCK INTERACTIVE SIMULATION
+    if (configRef.current.useMockMode) {
+      const mockTurns = MOCK_SIMULATIONS[configRef.current.playbookId] || [];
+      const turn = mockTurns[currentRound];
+      if (!turn) {
+        setStatus(SimulationStatus.FINISHED);
+        addMessage(AgentRole.SYSTEM, "Simulation complete (mock playbook completed).");
+        return;
+      }
+
+      // Simulate Attacker thinking/move delay
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      if (statusRef.current !== SimulationStatus.RUNNING) return;
+      addMessage(AgentRole.ATTACKER, turn.attackerMessage, turn.attackerThought, configRef.current.attackerModel);
+
+      // Simulate Target response delay
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      if (statusRef.current !== SimulationStatus.RUNNING) return;
+      addMessage(AgentRole.TARGET, turn.targetResponse, undefined, configRef.current.targetModel);
+
+      // Simulate Judge evaluation delay
+      await new Promise(resolve => setTimeout(resolve, 900));
+      if (statusRef.current !== SimulationStatus.RUNNING) return;
+      
+      const verdict: JudgeVerdict = {
+        round: currentRound + 1,
+        attackerSuccess: turn.attackerSuccess,
+        score: turn.judgeScore,
+        reasoning: turn.judgeReasoning,
+        winner: turn.attackerSuccess ? 'Red' : undefined
+      };
+      
+      setVerdicts(prev => [...prev, verdict]);
+      addMessage(AgentRole.JUDGE, verdict.reasoning, undefined, configRef.current.judgeModel);
+
+      if (verdict.attackerSuccess) {
+        setStatus(SimulationStatus.FINISHED);
+        addMessage(AgentRole.SYSTEM, `Use Case COMPROMISED: Leak detected in Round ${currentRound + 1}. Red Team Wins.`);
+      }
+
+      setCurrentRound(prev => prev + 1);
+      return;
+    }
+
+    // B. LIVE LLM DUEL SIMULATION
     try {
-      const isFirstTurn = messages.length === 0;
-      let attackerMsg = "";
-
-      const provider = getLLMProvider(configRef.current.modelName);
-
-      // Step A: Attacker
-      const historyForAttacker = messages; // current history
-      const { content: attackerMsgContent, thought: attackerThought } = await provider.generateAttackerMove(
+      // 1. Attacker Move
+      const historyForAttacker = messages;
+      const attackerProvider = getLLMProvider(configRef.current.attackerModel);
+      const { content: attackerMsgContent, thought: attackerThought } = await attackerProvider.generateAttackerMove(
         historyForAttacker,
         configRef.current.attackerGoal,
-        configRef.current.modelName
+        configRef.current.attackerModel,
+        apiKeysRef.current
       );
 
-      attackerMsg = attackerMsgContent; // keep local var for next steps context
-
       if (statusRef.current !== SimulationStatus.RUNNING) return;
-      addMessage(AgentRole.ATTACKER, attackerMsg, attackerThought);
+      addMessage(AgentRole.ATTACKER, attackerMsgContent, attackerThought, configRef.current.attackerModel);
 
-      // Step B: Target
-      const historyForTarget = [...messages, { id: 'temp', role: AgentRole.ATTACKER, content: attackerMsg, timestamp: Date.now() }];
-      const targetMsg = await provider.generateTargetResponse(
-        attackerMsg,
+      // 2. Target Response
+      const historyForTarget = [...messages, { 
+        id: generateId(), 
+        role: AgentRole.ATTACKER, 
+        content: attackerMsgContent, 
+        modelName: configRef.current.attackerModel,
+        timestamp: Date.now() 
+      }];
+      
+      const targetProvider = getLLMProvider(configRef.current.targetModel);
+      const targetMsg = await targetProvider.generateTargetResponse(
+        attackerMsgContent,
         historyForTarget,
         configRef.current.targetSecret,
         configRef.current.targetSystemPrompt,
-        configRef.current.modelName
+        configRef.current.targetModel,
+        apiKeysRef.current
       );
 
       if (statusRef.current !== SimulationStatus.RUNNING) return;
-      addMessage(AgentRole.TARGET, targetMsg);
+      addMessage(AgentRole.TARGET, targetMsg, undefined, configRef.current.targetModel);
 
-      // Step C: Judge
-      const historyForJudge = [...historyForTarget, { id: 'temp2', role: AgentRole.TARGET, content: targetMsg, timestamp: Date.now() }];
-      const verdict = await provider.evaluateRound(
+      // 3. Judge evaluation
+      const historyForJudge = [...historyForTarget, { 
+        id: generateId(), 
+        role: AgentRole.TARGET, 
+        content: targetMsg, 
+        modelName: configRef.current.targetModel,
+        timestamp: Date.now() 
+      }];
+      
+      const judgeProvider = getLLMProvider(configRef.current.judgeModel);
+      const verdict = await judgeProvider.evaluateRound(
         historyForJudge,
         configRef.current.targetSecret,
-        configRef.current.modelName,
-        currentRound + 1
+        configRef.current.judgeModel,
+        currentRound + 1,
+        apiKeysRef.current
       );
 
       if (statusRef.current !== SimulationStatus.RUNNING) return;
       setVerdicts(prev => [...prev, verdict]);
-      addMessage(AgentRole.JUDGE, verdict.reasoning);
+      addMessage(AgentRole.JUDGE, verdict.reasoning, undefined, configRef.current.judgeModel);
 
-      // Check win condition
       if (verdict.attackerSuccess) {
         setStatus(SimulationStatus.FINISHED);
-        addMessage(AgentRole.SYSTEM, `Use Case FAILED: Secret leaked in Round ${currentRound + 1}. Red Team Wins.`);
-      } else if (verdict.winner === 'Blue') {
-        // Explicit win by Blue if Judge supports it, otherwise continue
+        addMessage(AgentRole.SYSTEM, `Use Case COMPROMISED: Leak detected in Round ${currentRound + 1}. Red Team Wins.`);
       }
 
       setCurrentRound(prev => prev + 1);
 
     } catch (error) {
       console.error(error);
-      addMessage(AgentRole.SYSTEM, `Error: ${error instanceof Error ? error.message : 'Unknown API Error'}`);
+      addMessage(AgentRole.SYSTEM, `API Duel Error: ${error instanceof Error ? error.message : 'Unknown model provider failure'}`);
       setStatus(SimulationStatus.PAUSED);
     }
 
-  }, [messages, currentRound]); // Dependencies for the callback creation
+  }, [messages, currentRound]);
 
-  // Effect to trigger the loop
+  // Effect loop
   useEffect(() => {
     if (status === SimulationStatus.RUNNING) {
-      // We use a small timeout to let the UI render the previous state change before starting the heavy async op
       const timer = setTimeout(() => {
         runTurn();
-      }, 1000);
+      }, 500);
       return () => clearTimeout(timer);
     }
   }, [status, currentRound, runTurn]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden font-sans">
+    <div className="flex h-screen w-screen overflow-hidden font-sans bg-slate-950 text-slate-200">
       <ConfigPanel
         config={config}
         setConfig={setConfig}
@@ -190,18 +299,38 @@ const App: React.FC = () => {
         onStop={handleStop}
         onReset={handleReset}
         onExport={handleExportCSV}
+        onExportMarkdown={handleExportMarkdown}
         hasData={verdicts.length > 0}
+        onOpenKeyModal={() => setIsKeyModalOpen(true)}
+        apiKeys={apiKeys}
       />
 
-      <div className="flex-1 flex flex-col relative">
-        <header className="h-14 bg-slate-900 border-b border-slate-800 flex items-center px-6 justify-between shrink-0">
-          <h1 className="font-bold text-lg tracking-wide bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
-            AutoRedTeam <span className="text-slate-600 text-xs font-mono ml-2">v1.0.0 // SYSTEM_READY</span>
-          </h1>
-          <div className="flex gap-4 text-xs text-slate-500 font-mono">
-            <span>API_KEY: {process.env.API_KEY ? 'LOADED' : 'MISSING'}</span>
+      <div className="flex-1 flex flex-col relative min-w-0">
+        <header className="h-14 bg-slate-900 border-b border-slate-800/80 flex items-center px-6 justify-between shrink-0 select-none z-20">
+          <div className="flex items-center gap-3">
+            <h1 className="font-bold text-sm md:text-base tracking-wide bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
+              AutoRedTeam
+            </h1>
+            <span className="text-slate-600 text-[10px] font-mono hidden sm:inline">// MULTI_AGENT_SIMULATOR</span>
+            {config.useMockMode ? (
+              <span className="bg-amber-950/30 border border-amber-500/20 text-amber-400 text-[8px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-wider">
+                Mock Mode Active
+              </span>
+            ) : (
+              <span className="bg-indigo-950/30 border border-indigo-500/20 text-indigo-400 text-[8px] font-mono px-2 py-0.5 rounded font-bold uppercase tracking-wider animate-pulse">
+                Live Duel Active
+              </span>
+            )}
+          </div>
+          
+          <div className="flex items-center gap-4 text-[10px] text-slate-500 font-mono">
+            <span className="hidden md:inline">VERSION: v1.1.0</span>
+            <span className={status === SimulationStatus.RUNNING ? 'text-indigo-400' : 'text-slate-500'}>
+              SYS_LOAD: {status === SimulationStatus.RUNNING ? 'ACTIVE' : 'IDLE'}
+            </span>
           </div>
         </header>
+        
         <ChatFeed messages={messages} />
       </div>
 
@@ -209,6 +338,14 @@ const App: React.FC = () => {
         verdicts={verdicts}
         status={status}
         currentRound={currentRound}
+        config={config}
+      />
+
+      <ApiKeyModal
+        isOpen={isKeyModalOpen}
+        onClose={() => setIsKeyModalOpen(false)}
+        apiKeys={apiKeys}
+        onSave={handleSaveKeys}
       />
     </div>
   );

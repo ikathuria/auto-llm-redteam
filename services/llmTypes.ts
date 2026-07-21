@@ -1,10 +1,11 @@
-import { Message, JudgeVerdict } from "../types";
+import { Message, JudgeVerdict, ApiKeys } from "../types";
 
 export interface LLMProvider {
 	generateAttackerMove(
 		history: Message[],
 		goal: string,
-		modelName: string
+		modelName: string,
+		apiKeys?: ApiKeys
 	): Promise<{ content: string; thought: string }>;
 
 	generateTargetResponse(
@@ -12,13 +13,16 @@ export interface LLMProvider {
 		history: Message[],
 		secret: string,
 		baseSystemPrompt: string,
-		modelName: string
+		modelName: string,
+		apiKeys?: ApiKeys
 	): Promise<string>;
 
 	evaluateRound(
 		history: Message[],
 		secret: string,
 		modelName: string,
-		round: number
+		round: number,
+		apiKeys?: ApiKeys
 	): Promise<JudgeVerdict>;
 }
+
